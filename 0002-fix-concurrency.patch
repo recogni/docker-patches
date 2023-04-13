@@ -1,0 +1,81 @@
+diff --git a/vendor/github.com/moby/buildkit/cache/remotecache/v1/chains.go b/vendor/github.com/moby/buildkit/cache/remotecache/v1/chains.go
+index a76cc6917b..8b9d5debbd 100644
+--- a/vendor/github.com/moby/buildkit/cache/remotecache/v1/chains.go
++++ b/vendor/github.com/moby/buildkit/cache/remotecache/v1/chains.go
+@@ -2,6 +2,7 @@ package cacheimport
+ 
+ import (
+ 	"strings"
++	"sync"
+ 	"time"
+ 
+ 	"github.com/containerd/containerd/content"
+@@ -46,7 +47,9 @@ func (c *CacheChains) normalize() error {
+ 
+ 	validated := make([]*item, 0, len(c.items))
+ 	for _, it := range c.items {
++		it.backlinksMu.Lock()
+ 		it.validate()
++		it.backlinksMu.Unlock()
+ 	}
+ 	for _, it := range c.items {
+ 		if !it.invalid {
+@@ -111,6 +114,7 @@ type item struct {
+ 	resultTime time.Time
+ 
+ 	links     []map[link]struct{}
++	backlinksMu sync.Mutex
+ 	backlinks map[*item]struct{}
+ 	invalid   bool
+ }
+@@ -139,7 +143,10 @@ func (c *item) LinkFrom(rec solver.CacheExporterRecord, index int, selector stri
+ 	}
+ 
+ 	c.links[index][link{src: src, selector: selector}] = struct{}{}
++
++	src.backlinksMu.Lock()
+ 	src.backlinks[c] = struct{}{}
++	src.backlinksMu.Unlock()
+ }
+ 
+ func (c *item) validate() {
+diff --git a/vendor/github.com/moby/buildkit/solver/llbsolver/solver.go b/vendor/github.com/moby/buildkit/solver/llbsolver/solver.go
+index 31e8afca7a..74de8cc5f0 100644
+--- a/vendor/github.com/moby/buildkit/solver/llbsolver/solver.go
++++ b/vendor/github.com/moby/buildkit/solver/llbsolver/solver.go
+@@ -5,6 +5,7 @@ import (
+ 	"fmt"
+ 	"strings"
+ 	"time"
++	"sync"
+ 
+ 	"github.com/moby/buildkit/cache"
+ 	"github.com/moby/buildkit/cache/remotecache"
+@@ -46,6 +47,7 @@ type Solver struct {
+ 	gatewayForwarder          *controlgateway.GatewayForwarder
+ 	sm                        *session.Manager
+ 	entitlements              []string
++	cacheMu                   sync.Mutex
+ }
+ 
+ func New(wc *worker.Controller, f map[string]frontend.Frontend, cache solver.CacheManager, resolveCI map[string]remotecache.ResolveCacheImporterFunc, gatewayForwarder *controlgateway.GatewayForwarder, sm *session.Manager, ents []string) (*Solver, error) {
+@@ -173,7 +175,9 @@ func (s *Solver) Solve(ctx context.Context, id string, sessionID string, req fro
+ 			}
+ 			inp.Ref = workerRef.ImmutableRef
+ 
++			s.cacheMu.Lock()
+ 			dt, err := inlineCache(ctx, exp.CacheExporter, r, session.NewGroup(sessionID))
++			s.cacheMu.Unlock()
+ 			if err != nil {
+ 				return nil, err
+ 			}
+@@ -197,7 +201,9 @@ func (s *Solver) Solve(ctx context.Context, id string, sessionID string, req fro
+ 					}
+ 					m[k] = workerRef.ImmutableRef
+ 
++					s.cacheMu.Lock()
+ 					dt, err := inlineCache(ctx, exp.CacheExporter, r, session.NewGroup(sessionID))
++					s.cacheMu.Unlock()
+ 					if err != nil {
+ 						return nil, err
+ 					}

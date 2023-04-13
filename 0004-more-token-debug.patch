@@ -1,0 +1,62 @@
+diff --git a/vendor/github.com/containerd/containerd/remotes/docker/resolver.go b/vendor/github.com/containerd/containerd/remotes/docker/resolver.go
+index 2188ae3839..b342893040 100644
+--- a/vendor/github.com/containerd/containerd/remotes/docker/resolver.go
++++ b/vendor/github.com/containerd/containerd/remotes/docker/resolver.go
+@@ -538,10 +538,10 @@ func (r *request) do(ctx context.Context) (*http.Response, error) {
+ 	}
+
+ 	ctx = log.WithLogger(ctx, log.G(ctx).WithField("url", u))
+-	log.G(ctx).WithFields(requestFields(req)).Debug("do request")
+ 	if err := r.authorize(ctx, req); err != nil {
+ 		return nil, errors.Wrap(err, "failed to authorize")
+ 	}
++	log.G(ctx).WithFields(requestFields(req)).Debug("do request")
+ 	resp, err := ctxhttp.Do(ctx, r.host.Client, req)
+ 	if err != nil {
+ 		return nil, errors.Wrap(err, "failed to do request")
+@@ -605,17 +605,27 @@ func (r *request) String() string {
+ 	return r.host.Scheme + "://" + r.host.Host + r.path
+ }
+
++func authType(input string) string {
++	if strings.HasPrefix(input, "Bearer") {
++		return fmt.Sprintf("Bearer value of length %d", len(input))
++	} else if strings.HasPrefix(input, "Basic") {
++		return fmt.Sprintf("Basic value of length %d", len(input))
++	} else {
++		return "Unknown"
++	}
++}
++
+ func requestFields(req *http.Request) logrus.Fields {
+ 	fields := map[string]interface{}{
+ 		"request.method": req.Method,
+ 	}
+ 	for k, vals := range req.Header {
+ 		k = strings.ToLower(k)
+-		if k == "authorization" {
+-			continue
+-		}
+ 		for i, v := range vals {
+ 			field := "request.header." + k
++			if k == "authorization" {
++				v = authType(v)
++			}
+ 			if i > 0 {
+ 				field = fmt.Sprintf("%s.%d", field, i)
+ 			}
+diff --git a/vendor/github.com/moby/buildkit/util/resolver/authorizer.go b/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
+index 815363c3f9..70dab16ad2 100644
+--- a/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
++++ b/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
+@@ -297,6 +297,10 @@ func (ah *authHandler) doBearerAuth(ctx context.Context, sm *session.Manager, g
+ 		ah.scopedTokensMu.Unlock()
+ 		if exist {
+ 			if r.expires.IsZero() || r.expires.After(time.Now()) {
++				log.G(ctx).WithFields(logrus.Fields{
++					"expires": r.expires,
++					"scopes": scoped,
++				}).Debug("reusing existing token")
+ 				return r, nil
+ 			}
+ 		}

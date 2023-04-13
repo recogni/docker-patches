@@ -1,0 +1,90 @@
+diff --git a/vendor/github.com/moby/buildkit/util/resolver/authorizer.go b/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
+index e58038c420..815363c3f9 100644
+--- a/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
++++ b/vendor/github.com/moby/buildkit/util/resolver/authorizer.go
+@@ -320,7 +320,17 @@ func (ah *authHandler) doBearerAuth(ctx context.Context, sm *session.Manager, g
+ 	return r.token, nil
+ }
+
++func isTimeZero(t time.Time) bool {
++	unixTimeStart := time.Unix(0, 0).UTC()
++	return t.Equal(unixTimeStart) || t.IsZero()
++}
++
+ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g session.Group, to auth.TokenOptions) (r *authResult, err error) {
++	log.G(ctx).WithFields(logrus.Fields{
++		"scopes":  strings.Join(to.Scopes, ","),
++		"service": to.Service,
++	}).Debug("bearer auth: fetchToken")
++
+ 	var issuedAt time.Time
+ 	var expires int
+ 	var token string
+@@ -328,13 +338,30 @@ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g se
+ 		token = fmt.Sprintf("Bearer %s", token)
+
+ 		if err == nil {
++			var issuedAtReason string
++			var expiresReason string
+ 			r = &authResult{token: token}
+-			if issuedAt.IsZero() {
++			if isTimeZero(issuedAt) {
++				issuedAtReason = "set from now"
+ 				issuedAt = time.Now()
++			} else {
++				issuedAtReason = "set from request"
+ 			}
++
+ 			if exp := issuedAt.Add(time.Duration(float64(expires)*0.9) * time.Second); time.Now().Before(exp) {
++				expiresReason = "inferred"
+ 				r.expires = exp
++			} else {
++				expiresReason = "set from request"
+ 			}
++
++			log.G(ctx).WithFields(logrus.Fields{
++				"token": fmt.Sprintf("string of length %d", len(r.token)),
++				"expires": r.expires,
++				"expiresReason": expiresReason,
++				"issuedAt": issuedAt,
++				"issuedAtReason": issuedAtReason,
++			}).Debug("bearer auth: assigning token")
+ 		}
+ 	}()
+
+@@ -351,6 +378,11 @@ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g se
+ 		}
+ 		issuedAt, expires = time.Unix(resp.IssuedAt, 0), int(resp.ExpiresIn)
+ 		token = resp.Token
++		log.G(ctx).WithFields(logrus.Fields {
++			"Token": fmt.Sprintf("string of length %d", len(resp.Token)),
++			"ExpiresIn": resp.ExpiresIn,
++			"IssuedAt": resp.IssuedAt,
++		}).Debug("obtained token from sessionauth.FetchToken")
+ 		return nil, nil
+ 	}
+
+@@ -373,6 +405,7 @@ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g se
+ 					if err != nil {
+ 						return nil, err
+ 					}
++					log.G(ctx).Debug("obtained token from sessiauth.FetchTokenWithOAuth")
+ 					issuedAt, expires = resp.IssuedAt, resp.ExpiresIn
+ 					token = resp.AccessToken
+ 					return nil, nil
+@@ -384,6 +417,7 @@ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g se
+ 			}
+ 			return nil, err
+ 		}
++		log.G(ctx).Debug("obtained token from auth.FetchToken (with secret)")
+ 		issuedAt, expires = resp.IssuedAt, resp.ExpiresIn
+ 		token = resp.Token
+ 		return nil, nil
+@@ -393,6 +427,7 @@ func (ah *authHandler) fetchToken(ctx context.Context, sm *session.Manager, g se
+ 	if err != nil {
+ 		return nil, errors.Wrap(err, "failed to fetch anonymous token")
+ 	}
++	log.G(ctx).Debug("obtained token from auth.FetchToken (anonymously)")
+ 	issuedAt, expires = resp.IssuedAt, resp.ExpiresIn
+
+ 	token = resp.Token
